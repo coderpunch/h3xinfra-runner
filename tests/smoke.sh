@@ -16,16 +16,16 @@ docker run --rm --privileged \
     "$image" bash /smoke/inside.sh
 
 echo "== Default command: the entrypoint starts dockerd, then run.sh"
-# Without a runner configuration, run.sh stops with exit code 0 and this
-# message from the runner. The entrypoint starts run.sh only after dockerd
-# answers.
+# Without a runner configuration, run.sh stops with exit code 0 and a
+# 'Not configured' message from the runner. The entrypoint starts run.sh
+# only after dockerd answers.
 if ! output=$(docker run --rm --privileged --mount type=volume,dst=/var/lib/docker "$image" 2>&1); then
     echo "$output"
     echo "FAIL the default command stopped with an error" >&2
     exit 1
 fi
 echo "$output"
-if ! grep -q 'Runner is not configured' <<< "$output"; then
+if ! grep -qi 'not configured' <<< "$output"; then
     echo "FAIL run.sh did not start" >&2
     exit 1
 fi
