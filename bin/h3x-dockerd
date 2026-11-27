@@ -1,0 +1,51 @@
+#!/bin/bash
+# Start dockerd in this privileged container. h3x-runner-entrypoint runs this
+# script as root through sudo. The steps are the same as in the dind script
+# of the docker:dind image (https://github.com/moby/moby/blob/master/hack/dind),
+# but /tmp stays on disk: a tmpfs would use the memory of the job.
+set -euo pipefail
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# With this variable, dockerd and containerd do not use AppArmor, which a
+# nested daemon cannot control.
+export container=docker
+
+if [[ -d /sys/kernel/security ]] && ! mountpoint -q /sys/kernel/security; then
+    mount -t securityfs none /sys/kernel/security \
+        || echo "h3x-dockerd: cannot mount /sys/kernel/security" >&2
+fi
+
+# cgroup v2: move all processes of this cgroup to the child cgroup "init",
+# then enable all controllers for the child cgroups that dockerd makes. A
+# process that starts between the two steps makes the second step fail with
+# EBUSY, so try again.
+if [[ -f /sys/fs/cgroup/cgroup.controllers ]]; then
+    mkdir -p /sys/fs/cgroup/init
+    for attempt in {1..10}; do
+        # A process that stopped cannot move. Ignore that error.
+        xargs -rn1 < /sys/fs/cgroup/cgroup.procs > /sys/fs/cgroup/init/cgroup.procs || :
+        if sed -e 's/ / +/g' -e 's/^/+/' < /sys/fs/cgroup/cgroup.controllers \
+            > /sys/fs/cgroup/cgroup.subtree_control; then
+            break
+        fi
+        if [[ $attempt -eq 10 ]]; then
+            echo "h3x-dockerd: cannot enable the cgroup v2 controllers" >&2
+            exit 1
+        fi
+        sleep 0.1
+    done
+fi
+
+# Keep binfmt_misc mounted while dockerd runs. The kernel removes all
+# registered emulators (the QEMU handlers of docker/setup-qemu-action and
+# tonistiigi/binfmt) when the last binfmt_misc mount goes away. On a host,
+# systemd holds this mount. In a Kata VM, nothing else does.
+if [[ -d /proc/sys/fs/binfmt_misc ]] && ! mountpoint -q /proc/sys/fs/binfmt_misc; then
+    mount -t binfmt_misc binfmt_misc /proc/sys/fs/binfmt_misc \
+        || echo "h3x-dockerd: cannot mount binfmt_misc" >&2
+fi
+
+# Shared mount propagation, as on a host with systemd.
+mount --make-rshared /
+
+exec dockerd

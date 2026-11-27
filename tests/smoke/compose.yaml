@@ -1,0 +1,25 @@
+# Compose project of tests/smoke/inside.sh. The client gets, through the web
+# service on the project network, the file that the script wrote in its work
+# directory. The same bind mount gives a `container:` job its workspace.
+services:
+  web:
+    image: h3x-smoke
+    pull_policy: never
+    command: ["httpd", "-f", "-p", "8080", "-h", "/www"]
+    volumes:
+      - ${WWW_DIR:?}:/www:ro
+  client:
+    image: h3x-smoke
+    pull_policy: never
+    depends_on: [web]
+    environment:
+      TOKEN: ${TOKEN:?}
+    command:
+      - sh
+      - -c
+      - |
+        for i in 1 2 3 4 5 6 7 8 9 10; do
+          wget -q -O /tmp/index.html http://web:8080/index.html && break
+          sleep 1
+        done
+        test "$$(cat /tmp/index.html)" = "$$TOKEN"

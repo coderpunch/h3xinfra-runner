@@ -1,0 +1,38 @@
+#!/bin/bash
+# Entrypoint of the h3xinfra-runner image. It runs as the runner user
+# (uid 1001) in a privileged container inside a VM sandbox.
+#
+# 1. Stop if the CPU has no "hypervisor" flag. A VM (a Kata Containers
+#    guest, a GitHub-hosted runner) sets this flag. Without it, this
+#    privileged container runs on a bare-metal node, and each job would get
+#    root access to the node. The check cannot detect runc on a node that is
+#    itself a VM.
+# 2. Start dockerd as root through sudo (h3x-dockerd), in the background.
+#    The output of dockerd goes to the container log.
+# 3. Wait until the Docker API answers, for a maximum of 60 seconds.
+# 4. Replace this shell with docker-init (tini). As PID 1, it reaps orphaned
+#    processes (for example exited containerd shims) and forwards signals to
+#    the command. The default command is /home/runner/run.sh, the runner of
+#    the base image. Arguments replace the default command.
+set -euo pipefail
+
+if ! grep -qw hypervisor /proc/cpuinfo; then
+    echo "h3x-runner-entrypoint: the CPU has no hypervisor flag, so this container is not in a VM sandbox. dockerd and the runner do not start." >&2
+    exit 1
+fi
+
+if [[ $# -eq 0 ]]; then
+    set -- /home/runner/run.sh
+fi
+
+sudo --non-interactive /usr/local/bin/h3x-dockerd &
+
+for _ in {1..60}; do
+    if docker info > /dev/null 2>&1; then
+        exec /usr/libexec/docker/docker-init -- "$@"
+    fi
+    sleep 1
+done
+
+echo "h3x-runner-entrypoint: dockerd did not answer in 60 seconds ($(id))" >&2
+exit 1

@@ -1,0 +1,81 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":semanticCommits",
+    "helpers:pinGitHubActionDigests"
+  ],
+  "commitMessagePrefix": "chore(deps):",
+  "minimumReleaseAge": "3 days",
+  "platformAutomerge": false,
+  "ignorePaths": [
+    "**/node_modules/**",
+    "**/bower_components/**",
+    "**/vendor/**",
+    "**/examples/**",
+    "**/__tests__/**",
+    "**/test/**",
+    "**/__fixtures__/**"
+  ],
+  "packageRules": [
+    {
+      "description": "Automerge digest, patch and pin updates after the CI workflow passes; a merge of a change to the image then creates the next release (auto-release.yml). platformAutomerge is off: GitHub auto-merge is off and main has no required checks, so GitHub could merge before CI finishes. Minor and major updates wait for a person. ignorePaths above is the config:recommended list without **/tests/**, so that Renovate also updates the test image in tests/smoke/Dockerfile",
+      "matchUpdateTypes": ["digest", "patch", "pin"],
+      "automerge": true
+    },
+    {
+      "description": "Docker Hub serves tag timestamps to anonymous clients only for the first 1000 tags, and ghcr.io serves none, so under the default timestamp-required every image update would wait forever. Apply the 3-day age only when a timestamp exists (renovatebot/renovate#46925). The runner rules below give the base image a release date",
+      "matchDatasources": ["docker"],
+      "minimumReleaseAgeBehaviour": "timestamp-optional"
+    },
+    {
+      "description": "Docker Engine: the Dockerfile pins five packages of the Docker apt repository by exact version in its apt-get install line (dockerfile manager). Renovate cannot tell the repository from the base image, so it is given here, for Ubuntu 24.04 (noble), like the docker.sources file in the Dockerfile. The repository has no release dates, so the 3-day age gate cannot apply. Thus, never automerge: dockerd and containerd run as root next to the secrets of each job, so a person reviews each update and releases it by hand. Placed after the automerge rule so this automerge: false wins. One pull request for all five: docker-ce and docker-ce-cli must have the same version (tests/test_repo.py)",
+      "matchDatasources": ["deb"],
+      "matchPackageNames": ["containerd.io", "docker-buildx-plugin", "docker-ce", "docker-ce-cli", "docker-compose-plugin"],
+      "registryUrls": ["https://download.docker.com/linux/ubuntu?suite=noble&components=stable&binaryArch=amd64"],
+      "groupName": "Docker Engine",
+      "minimumReleaseAgeBehaviour": "timestamp-optional",
+      "automerge": false
+    },
+    {
+      "description": "One pull request for all GitHub Actions updates (helpers:pinGitHubActionDigests keeps the SHA and the '# vX.Y.Z' comment current). Never automerge: new action code runs with packages: write and id-token: write in publish.yml, so a person reviews each update. Placed after the automerge rule so this automerge: false wins",
+      "matchManagers": ["github-actions"],
+      "groupName": "GitHub Actions",
+      "automerge": false
+    },
+    {
+      "description": "GitHub Actions runner (the FROM line of the Dockerfile): one 'GitHub Actions runner' pull request with two dependencies from the same line, the base image (dockerfile manager, writes tag and digest) and the actions/runner GitHub release (custom manager below), which has the release date that ghcr.io lacks. internalChecksFilter none: the release dependency offers the newest release, as the image does, and renovate/stability-days stays pending until that release is 3 days old; strict would date an older release than the image writes. ignoreUnstable false: ghcr.io also carries GitHub prereleases (2.338.1), so the release dependency must offer them too. Placed after every automerge rule so these three rules win",
+      "matchPackageNames": ["ghcr.io/actions/actions-runner", "actions/runner"],
+      "groupName": "GitHub Actions runner",
+      "internalChecksFilter": "none",
+      "ignoreUnstable": false,
+      "automerge": false
+    },
+    {
+      "description": "Runner version updates need both dependencies: a tag without its GitHub release, or a release whose image is not pushed yet, waits (minimum-group-size-not-met). Digest-only updates (actions/runner re-pushes tags, as 2.338.2 on 2026-11-11) have no release dependency and no age gate; the attestation check of CI (scripts/check-base-image.sh) gates them",
+      "matchPackageNames": ["ghcr.io/actions/actions-runner", "actions/runner"],
+      "matchUpdateTypes": ["major", "minor", "patch"],
+      "minimumGroupSize": 2
+    },
+    {
+      "description": "The runner updates itself: minor, patch and digest updates merge after CI and renovate/stability-days, and auto-release.yml publishes the next image. GitHub stops sending jobs to a runner that is too far behind a newer release. Majors wait for a person",
+      "matchPackageNames": ["ghcr.io/actions/actions-runner", "actions/runner"],
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "automerge": true
+    }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Release date of the GitHub Actions runner base image: ghcr.io serves no tag timestamps, so this reads the image tag again as the actions/runner GitHub release, which has one (see the runner package rules). The dockerfile manager still writes tag and digest. depNameTemplate must sort after ghcr.io/actions/actions-runner: Renovate applies the updates of a branch in depName order, so the image rewrites the line first and this one finds nothing left to change (the other order would update the tag and keep the old digest)",
+      "managerFilePatterns": ["/^Dockerfile$/"],
+      "matchStrings": [
+        "FROM ghcr\\.io/actions/actions-runner:(?<currentValue>\\d+\\.\\d+\\.\\d+)@sha256:"
+      ],
+      "datasourceTemplate": "github-releases",
+      "depNameTemplate": "github.com/actions/runner",
+      "packageNameTemplate": "actions/runner",
+      "extractVersionTemplate": "^v(?<version>.+)$"
+    }
+  ]
+}

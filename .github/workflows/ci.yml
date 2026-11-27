@@ -1,0 +1,45 @@
+name: CI
+
+# Checks each pull request and each push to main. Renovate merges its own
+# pull requests only after this workflow passes (renovate.json).
+#
+# This repository is public. Every job runs on a GitHub-hosted runner, never
+# on a self-hosted runner (tests/test_repo.py checks it). Every `uses:` is
+# pinned to a full commit SHA with its tag in a comment; Renovate
+# (helpers:pinGitHubActionDigests) keeps both current.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  ci-ok:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check the repository files
+        run: python3 -m unittest discover -s tests -v
+      - name: Check the shell scripts
+        run: shellcheck bin/* scripts/*.sh tests/*.sh tests/smoke/*.sh
+      - name: Verify the attestation of the base image
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/check-base-image.sh
+      - name: Build the image
+        run: docker build --tag h3xinfra-runner:ci .
+      - name: Smoke test
+        run: tests/smoke.sh h3xinfra-runner:ci

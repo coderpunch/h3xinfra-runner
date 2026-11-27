@@ -1,0 +1,131 @@
+name: Publish
+
+# Builds and tests the image of a release tag, pushes it as
+# ghcr.io/coderpunch/h3xinfra-runner:<tag> and attests its build provenance.
+# The tested image is the pushed image: one docker build, no rebuild.
+#
+# Two jobs on two runners. The job "build" runs the privileged smoke test,
+# so it has no write permission. The job "push" has the permissions to push
+# and attest, and it starts no container. It pushes the image only if it has
+# the image ID that "build" recorded before the smoke test.
+on:
+  release:
+    types: [published]
+  # Called by auto-release.yml: a release that GITHUB_TOKEN creates does not
+  # start the release event above.
+  workflow_call:
+    inputs:
+      tag:
+        description: Release tag to publish, for example 2.338.2-1
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: publish-${{ inputs.tag || github.event.release.tag_name }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+  TAG: ${{ inputs.tag || github.event.release.tag_name }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      image-id: ${{ steps.build.outputs.image-id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG }}
+          persist-credentials: false
+      - name: Check the tag
+        run: |
+          runner_version=$(scripts/runner-version.sh)
+          n=${TAG#"$runner_version"-}
+          if [[ $TAG != "$runner_version"-* || ! $n =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::The tag must be <runner version>-<n>, for example $runner_version-1. The Dockerfile has runner $runner_version."
+            exit 1
+          fi
+      - name: Verify the attestation of the base image
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/check-base-image.sh
+      - name: Build the image
+        id: build
+        run: |
+          docker build --tag "$IMAGE:$TAG" .
+          echo "image-id=$(docker image inspect --format '{{.Id}}' "$IMAGE:$TAG")" >> "$GITHUB_OUTPUT"
+      - name: Smoke test
+        run: tests/smoke.sh "$IMAGE:$TAG"
+      - name: Save the image
+        run: docker save "$IMAGE:$TAG" | zstd -T0 > image.tar.zst
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: image
+          path: image.tar.zst
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  push:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+      # actions/attest: sign through Sigstore, store the attestation and the
+      # storage record.
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: image
+      - name: Load the image
+        env:
+          IMAGE_ID: ${{ needs.build.outputs.image-id }}
+        run: |
+          zstd -dc image.tar.zst | docker load
+          loaded=$(docker image inspect --format '{{.Id}}' "$IMAGE:$TAG")
+          if [[ -z $IMAGE_ID || $loaded != "$IMAGE_ID" ]]; then
+            echo "::error::The loaded image $loaded is not the built image '$IMAGE_ID'."
+            exit 1
+          fi
+      - name: Sign in to GHCR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # Not github.actor: on automatic releases that is renovate[bot].
+        run: docker login ghcr.io --username "$GITHUB_REPOSITORY_OWNER" --password-stdin <<< "$GH_TOKEN"
+      - name: Push the image
+        id: push
+        run: |
+          # Each tag is published one time. Consumers pin tag and digest.
+          if docker buildx imagetools inspect "$IMAGE:$TAG" > /dev/null 2>&1; then
+            echo "::error::$IMAGE:$TAG exists. Publish a new release tag."
+            exit 1
+          fi
+          docker push "$IMAGE:$TAG"
+          digest=$(docker buildx imagetools inspect "$IMAGE:$TAG" --format '{{json .Manifest}}' | jq -r .digest)
+          if [[ ! $digest =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::No digest for $IMAGE:$TAG"
+            exit 1
+          fi
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "Pushed \`$IMAGE:$TAG@$digest\`" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Attest the build provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true

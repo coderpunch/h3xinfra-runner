@@ -1,0 +1,59 @@
+name: Auto release
+
+# When Renovate merges an update to a file that goes into the image, create
+# the next release, <runner version>-<n>, and publish the image. The owner
+# releases changes from people by hand.
+on:
+  push:
+    branches: [main]
+    paths:
+      - Dockerfile
+      - docker.asc
+      - bin/**
+
+permissions: {}
+
+concurrency:
+  group: auto-release
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  release:
+    if: github.actor == 'renovate[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Create the next release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          tag=$(gh release list --limit 1000 --json tagName --jq '.[].tagName' | scripts/next-tag.sh)
+          gh release create "$tag" --target "$GITHUB_SHA" --title "$tag" --generate-notes
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+  # A release that GITHUB_TOKEN creates does not start publish.yml, so call
+  # it directly. A called workflow gets at most these permissions.
+  publish:
+    needs: release
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    uses: ./.github/workflows/publish.yml
+    with:
+      tag: ${{ needs.release.outputs.tag }}
