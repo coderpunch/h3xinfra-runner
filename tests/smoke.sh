@@ -12,6 +12,7 @@ smoke_dir=$(cd "$(dirname "$0")/smoke" && pwd)
 echo "== Checks inside the container (tests/smoke/inside.sh)"
 docker run --rm --privileged \
     --mount type=volume,dst=/var/lib/docker \
+    --mount type=volume,dst=/home/runner/_work \
     --mount "type=bind,src=$smoke_dir,dst=/smoke,readonly" \
     "$image" bash /smoke/inside.sh
 

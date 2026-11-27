@@ -61,6 +61,12 @@ class DockerfileTest(unittest.TestCase):
         self.assertIn("COPY docker.asc /etc/apt/keyrings/docker.asc", self.text)
 
 
+    def test_dockerd_gives_the_work_disk_to_the_runner(self):
+        # A Kata emptyDir is a new ext4 disk that root owns.
+        script = (ROOT / "bin" / "h3x-dockerd").read_text()
+        self.assertIn("chown runner:runner /home/runner/_work", script)
+        self.assertLess(script.index("chown runner:runner"), script.index("exec dockerd"))
+
     def test_dockerd_keeps_binfmt_misc_mounted(self):
         # In a Kata VM nothing else holds a binfmt_misc mount, and the kernel
         # removes the QEMU handlers when the last mount goes away.
