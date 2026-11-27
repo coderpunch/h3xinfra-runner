@@ -71,11 +71,17 @@ The runner pod must have these properties:
 | `securityContext.privileged` | `true` | `dockerd` must configure cgroups, mounts and iptables. |
 | `securityContext.runAsUser` and `runAsGroup` | `1001` | The runner user. The container runtime adds the groups `sudo` and `docker` from `/etc/group` of the image. |
 | Volume at `/var/lib/docker` | An `emptyDir` volume with a `sizeLimit` | The data of `dockerd` stays out of the image layers. |
+| Volume at `/home/runner/_work` (recommended) | An `emptyDir` volume | The workspace and the tool cache get a local disk. Before `dockerd` starts, `h3x-dockerd` gives this directory to the user `runner`. |
 
 The Docker storage driver uses overlayfs. overlayfs cannot use a virtio-fs
 directory as its upper directory. In the runtime-rs configuration of Kata
 Containers 4, set `emptydir_mode = "block-plain"`. Then the guest gets the
 `emptyDir` volume as a block device, and the volume is ext4 in the guest.
+
+With block-plain, root owns each new `emptyDir` volume, and only root can
+write to it. Thus, `h3x-dockerd` changes the owner of `/home/runner/_work`.
+A workspace on virtio-fs (no volume) also works, but it is slower. On
+2026-11-27, a CI job with many small files took approximately 30% more time.
 
 This example shows the runner part of an ARC `AutoscalingRunnerSet`:
 
@@ -94,9 +100,13 @@ template:
           runAsUser: 1001
           runAsGroup: 1001
         volumeMounts:
+          - name: work
+            mountPath: /home/runner/_work
           - name: docker
             mountPath: /var/lib/docker
     volumes:
+      - name: work
+        emptyDir: {}
       - name: docker
         emptyDir:
           sizeLimit: 16Gi

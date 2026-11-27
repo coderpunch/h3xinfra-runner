@@ -39,6 +39,10 @@ echo "storage driver: $(docker info --format '{{.Driver}}')"
 echo "-- binfmt_misc stays mounted for the QEMU handlers of multi-platform builds"
 mountpoint -q /proc/sys/fs/binfmt_misc || fail "binfmt_misc is not mounted"
 
+echo "-- the runner owns the work disk (a new volume belongs to root)"
+[[ $(stat -c %u /home/runner/_work) -eq 1001 ]] || fail "/home/runner/_work is not owned by uid 1001"
+touch /home/runner/_work/write-test || fail "cannot write to /home/runner/_work"
+
 echo "-- runner files and extra tools"
 [[ -x /home/runner/run.sh ]] || fail "/home/runner/run.sh"
 ldconfig -p | grep -q 'libatomic\.so\.1 ' || fail "libatomic.so.1"

@@ -45,6 +45,13 @@ if [[ -d /proc/sys/fs/binfmt_misc ]] && ! mountpoint -q /proc/sys/fs/binfmt_misc
         || echo "h3x-dockerd: cannot mount binfmt_misc" >&2
 fi
 
+# Give the work disk to the runner. In a Kata VM each emptyDir is a new ext4
+# disk that root owns (mode 0755), and the runner (uid 1001) writes its
+# workspace and tool cache to /home/runner/_work.
+if [[ -d /home/runner/_work ]] && [[ $(stat -c %u /home/runner/_work) != 1001 ]]; then
+    chown runner:runner /home/runner/_work
+fi
+
 # Shared mount propagation, as on a host with systemd.
 mount --make-rshared /
 
