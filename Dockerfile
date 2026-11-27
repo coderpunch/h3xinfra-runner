@@ -43,7 +43,7 @@ RUN apt-get update \
         docker-buildx-plugin=0.39.1-1~ubuntu.24.04~noble \
         docker-ce=5:29.10.1-1~ubuntu.24.04~noble \
         docker-ce-cli=5:29.10.1-1~ubuntu.24.04~noble \
-        docker-compose-plugin=5.8.0-1~ubuntu.24.04~noble \
+        docker-compose-plugin=5.8.1-1~ubuntu.24.04~noble \
         libatomic1 \
         pigz \
         xz-utils \
