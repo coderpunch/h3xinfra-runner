@@ -17,6 +17,10 @@
     "**/test/**",
     "**/__fixtures__/**"
   ],
+  "osvVulnerabilityAlerts": true,
+  "vulnerabilityAlerts": {
+    "labels": ["security"]
+  },
   "packageRules": [
     {
       "description": "Automerge digest, patch and pin updates after the CI workflow passes; a merge of a change to the image then creates the next release (auto-release.yml). platformAutomerge is off: GitHub auto-merge is off and main has no required checks, so GitHub could merge before CI finishes. Minor and major updates wait for a person. ignorePaths above is the config:recommended list without **/tests/**, so that Renovate also updates the test image in tests/smoke/Dockerfile",
